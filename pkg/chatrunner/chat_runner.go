@@ -9,6 +9,7 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 	tea "github.com/charmbracelet/bubbletea"
 	bobachat "github.com/go-go-golems/bobatea/pkg/chat" // Alias for clarity
+	"github.com/go-go-golems/bobatea/pkg/commandpalette"
 	geppetto_conversation "github.com/go-go-golems/geppetto/pkg/conversation"
 	"github.com/go-go-golems/geppetto/pkg/events"
 	"github.com/go-go-golems/geppetto/pkg/steps"
@@ -113,12 +114,20 @@ func (cs *ChatSession) runChatInternal() error {
 		log.Debug().Msg("Router handlers running")
 
 		backend := ui.NewStepBackend(uiStep)
-		model := bobachat.InitialModel(cs.manager, backend, cs.uiOptions...)
+		
+		// Add command palette to UI options
+		commandPaletteConfig := createPinocchioCommandPalette()
+		uiOptionsWithPalette := append(cs.uiOptions, bobachat.WithCommandPalette(commandPaletteConfig))
+		
+		chatModel := bobachat.InitialModel(cs.manager, backend, uiOptionsWithPalette...)
+		
+		// Wrap the chat model with pinocchio-specific command handling
+		model := newPinocchioModel(chatModel, cs.manager)
 		p := tea.NewProgram(model, cs.programOptions...)
 
 		// Setup forwarding handler
 		log.Debug().Msg("Adding UI event handler")
-		router.AddHandler("ui", "ui", ui.StepChatForwardFunc(p)) // Use the forwarding func
+		router.AddHandler("ui", "ui", ui.StepChatForwardFunc(p))
 
 		err = router.RunHandlers(childCtx)
 		if err != nil {
@@ -444,4 +453,87 @@ func askForChatContinuation(tty io.ReadWriter) (bool, error) {
 	_, _ = fmt.Fprint(tty, "\n") // Add newline after prompt
 
 	return answer == "y" || answer == "Y" || answer == "", nil // Yes if 'y', 'Y', or empty (default)
+}
+
+// createPinocchioCommandPalette creates a command palette configuration for pinocchio
+func createPinocchioCommandPalette() commandpalette.CommandPaletteConfig {
+	commands := []commandpalette.Command{
+		{Name: "/quit", Description: "Exit pinocchio", Usage: "/quit", NeedsParameters: false},
+		{Name: "/regenerate", Description: "Regenerate last response", Usage: "/regenerate", NeedsParameters: false},
+		{Name: "/help", Description: "Show help", Usage: "/help", NeedsParameters: false},
+		{Name: "/clear", Description: "Clear conversation", Usage: "/clear", NeedsParameters: false},
+		{Name: "/save", Description: "Save conversation", Usage: "/save", NeedsParameters: false},
+	}
+
+	return commandpalette.CommandPaletteConfig{
+		Commands:    commands,
+		Width:       60,
+		Height:      15,
+		Title:       "🤖 Pinocchio Commands",
+		Placeholder: "Search commands...",
+	}
+}
+
+// pinocchioModel wraps the bobatea chat model and handles pinocchio-specific commands
+type pinocchioModel struct {
+	chatModel tea.Model
+	manager   geppetto_conversation.Manager
+}
+
+func newPinocchioModel(chatModel tea.Model, manager geppetto_conversation.Manager) pinocchioModel {
+	return pinocchioModel{
+		chatModel: chatModel,
+		manager:   manager,
+	}
+}
+
+func (m pinocchioModel) Init() tea.Cmd {
+	return m.chatModel.Init()
+}
+
+func (m pinocchioModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	
+	// Handle pinocchio-specific command palette events
+	switch msg := msg.(type) {
+	case commandpalette.CommandSelectedMsg:
+		cmd = m.handleCommand(msg.Command, []string{})
+		if cmd != nil {
+			return m, cmd
+		}
+	case commandpalette.CommandWithParamsMsg:
+		cmd = m.handleCommand(msg.Command, []string{})
+		if cmd != nil {
+			return m, cmd
+		}
+	}
+	
+	// Forward to chat model
+	m.chatModel, cmd = m.chatModel.Update(msg)
+	return m, cmd
+}
+
+func (m pinocchioModel) View() string {
+	return m.chatModel.View()
+}
+
+func (m pinocchioModel) handleCommand(command string, params []string) tea.Cmd {
+	switch command {
+	case "/quit":
+		return tea.Quit
+	case "/regenerate":
+		// TODO: Implement regenerate functionality
+		return nil
+	case "/help":
+		// TODO: Implement help functionality
+		return nil
+	case "/clear":
+		// TODO: Implement clear functionality
+		return nil
+	case "/save":
+		// TODO: Implement save functionality
+		return nil
+	default:
+		return nil
+	}
 }
