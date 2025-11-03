@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"strconv"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/go-go-golems/geppetto/pkg/turns"
 	"github.com/go-go-golems/glazed/pkg/cmds/layers"
 	rediscfg "github.com/go-go-golems/pinocchio/pkg/redisstream"
+	"github.com/go-go-golems/pinocchio/pkg/snapshots"
 )
 
 // RouterSettings are exposed via parameter layers (addr, agent, idle timeout, etc.).
@@ -53,6 +55,8 @@ func NewRouter(ctx context.Context, parsed *layers.ParsedLayers, staticFS embed.
 		upgrader:      websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 		cm:            &ConvManager{conns: map[string]*Conversation{}},
 	}
+	// default projector; store to be enabled via WithSnapshotsSQLite
+	r.proj = snapshots.NewBasicProjector()
 	// set redis flags for ws reader
 	if rs.Enabled {
 		r.usesRedis = true
@@ -73,6 +77,21 @@ func (r *Router) RegisterTool(name string, f ToolFactory) { r.toolFactories[name
 
 // AddProfile registers a chat profile.
 func (r *Router) AddProfile(p *Profile) { _ = r.profiles.Add(p) }
+
+// EnableSnapshotsSQLite opens (or creates) an on-disk SQLite store for snapshots
+// and enables projection persistence.
+func (r *Router) EnableSnapshotsSQLite(path string) error {
+    store, err := snapshots.OpenSQLite(path)
+    if err != nil {
+        return err
+    }
+    r.snapStore = store
+    if r.proj == nil {
+        r.proj = snapshots.NewBasicProjector()
+    }
+    log.Info().Str("component", "webchat").Str("db", path).Msg("snapshot store enabled (sqlite)")
+    return nil
+}
 
 // Mount attaches all handlers to a parent mux with the given prefix.
 func (r *Router) Mount(mux *http.ServeMux, prefix string) { mux.Handle(prefix, r.mux) }
@@ -162,6 +181,39 @@ func (r *Router) registerHTTPHandlers() {
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	})
+
+	// Hydration API: GET /api/conversations/{convId}/timeline?sinceVersion=...
+	r.mux.HandleFunc("/api/conversations/", func(w http.ResponseWriter, r0 *http.Request) {
+		if r.snapStore == nil {
+			http.Error(w, "hydration unavailable", http.StatusNotImplemented)
+			return
+		}
+		path := strings.TrimPrefix(r0.URL.Path, "/api/conversations/")
+		parts := strings.Split(path, "/")
+		if len(parts) < 2 || parts[1] != "timeline" {
+			http.NotFound(w, r0)
+			return
+		}
+		convID := parts[0]
+		var since *int64
+		if sv := r0.URL.Query().Get("sinceVersion"); sv != "" {
+			if v, err := parseInt64(sv); err == nil {
+				since = &v
+			}
+		}
+		snaps, err := r.snapStore.GetByConversation(r0.Context(), convID, since)
+		if err != nil {
+			log.Error().Err(err).Str("component", "webchat").Str("conv_id", convID).Msg("hydration query failed")
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(snaps)
+	})
+
+}
+
+func parseInt64(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
 
 	// websocket join: /ws?conv_id=...&profile=slug (falls back to chat_profile cookie)
 	r.mux.HandleFunc("/ws", func(w http.ResponseWriter, r0 *http.Request) {

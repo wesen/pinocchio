@@ -13,6 +13,7 @@ import (
 	"github.com/go-go-golems/geppetto/pkg/turns"
 	"github.com/go-go-golems/glazed/pkg/cmds/layers"
 	"github.com/gorilla/websocket"
+	"github.com/go-go-golems/pinocchio/pkg/snapshots"
 )
 
 // MiddlewareFactory creates a middleware instance from an arbitrary config object.
@@ -96,4 +97,8 @@ type Router struct {
 	usesRedis      bool
 	redisAddr      string
 	idleTimeoutSec int
+
+	// snapshots (optional)
+	snapStore snapshots.SnapshotStore
+	proj      snapshots.TimelineProjector
 }

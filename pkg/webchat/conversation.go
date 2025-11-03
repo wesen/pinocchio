@@ -91,7 +91,13 @@ func (r *Router) convertAndBroadcast(conv *Conversation, e events.Event) {
 		}
 		conv.connsMu.RUnlock()
 	}
-	if frames := SemanticEventsFromEvent(e); frames != nil {
+    var frames [][]byte
+    if r.snapStore != nil && r.proj != nil {
+        frames = SemanticEventsFromEventWithProjection(r.baseCtx, e, r.proj, r.snapStore)
+    } else {
+        frames = SemanticEventsFromEvent(e)
+    }
+    if frames != nil {
 		for _, b := range frames {
 			send(b)
 		}

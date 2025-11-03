@@ -9,6 +9,8 @@ import (
 	"github.com/go-go-golems/geppetto/pkg/events"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
+	"context"
+	"github.com/go-go-golems/pinocchio/pkg/snapshots"
 )
 
 type TimelineEvent struct {
@@ -140,6 +142,18 @@ func SemanticEventsFromEvent(e events.Event) [][]byte {
 	}
 	log.Debug().Str("component", "web_forwarder").Msg("no semantic mapping for event; dropping")
 	return nil
+}
+
+// SemanticEventsFromEventWithProjection emits SEM frames (as above) and also invokes
+// the provided projector/store side-channel for persistence. Errors are logged
+// by the caller; this helper does not handle retries/backoff.
+func SemanticEventsFromEventWithProjection(ctx context.Context, e events.Event, proj snapshots.TimelineProjector, store snapshots.SnapshotStore) [][]byte {
+    frames := SemanticEventsFromEvent(e)
+    // Fire-and-forget persistence; ignore errors to avoid impacting streaming.
+    if err := snapshots.ProjectAndPersist(ctx, proj, store, e); err != nil {
+        log.Warn().Err(err).Str("component", "web_forwarder").Msg("project/persist failure (non-fatal)")
+    }
+    return frames
 }
 
 // TimelineEventsFromEvent retained for compatibility if needed by UI
