@@ -69,6 +69,10 @@ func (c *Command) RunIntoWriter(ctx context.Context, parsed *layers.ParsedLayers
 	if err != nil {
 		return errors.Wrap(err, "new webchat router")
 	}
+	// Enable server-side snapshots (SQLite) for hydration
+	if err := r.EnableSnapshotsSQLite("snapshots.db"); err != nil {
+		return errors.Wrap(err, "enable snapshots sqlite")
+	}
 
 	// Optional SQLite DB (best-effort)
 	var dbWithRegexp *sql.DB

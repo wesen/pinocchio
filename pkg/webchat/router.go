@@ -188,6 +188,7 @@ func (r *Router) registerHTTPHandlers() {
 			http.Error(w, "hydration unavailable", http.StatusNotImplemented)
 			return
 		}
+		start := time.Now()
 		path := strings.TrimPrefix(r0.URL.Path, "/api/conversations/")
 		parts := strings.Split(path, "/")
 		if len(parts) < 2 || parts[1] != "timeline" {
@@ -207,13 +208,10 @@ func (r *Router) registerHTTPHandlers() {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		log.Debug().Str("component", "webchat").Str("conv_id", convID).Int("snapshots", len(snaps)).Dur("elapsed", time.Since(start)).Msg("hydration served")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(snaps)
 	})
-
-}
-
-func parseInt64(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
 
 	// websocket join: /ws?conv_id=...&profile=slug (falls back to chat_profile cookie)
 	r.mux.HandleFunc("/ws", func(w http.ResponseWriter, r0 *http.Request) {
@@ -575,6 +573,8 @@ func parseInt64(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
 		_ = json.NewEncoder(w).Encode(map[string]string{"run_id": conv.RunID, "conv_id": conv.ID})
 	})
 }
+
+func parseInt64(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
 
 // helpers
 func fsSub(staticFS embed.FS, path string) (fs.FS, error) { return fs.Sub(staticFS, path) }

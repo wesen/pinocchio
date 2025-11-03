@@ -8,7 +8,14 @@ export const useStore = create(devtools(subscribeWithSelector((set, get)=>({
     runId: '',
     status: 'idle',
   },
-  setConvId: (v)=> set((s)=>({ app: { ...s.app, convId: v } }), false, { type: 'app/setConvId', payload: { convId: v } }),
+  setConvId: (v)=> set((s)=>{
+    try {
+      const u = new URL(location.href);
+      if (v) { u.searchParams.set('conv_id', String(v)); } else { u.searchParams.delete('conv_id'); }
+      history.replaceState(null, '', u.pathname + u.search + u.hash);
+    } catch(_){ }
+    return { app: { ...s.app, convId: v } };
+  }, false, { type: 'app/setConvId', payload: { convId: v } }),
   setRunId: (v)=> set((s)=>({ app: { ...s.app, runId: v } }), false, { type: 'app/setRunId', payload: { runId: v } }),
   setStatus: (v)=> set((s)=>({ app: { ...s.app, status: v } }), false, { type: 'app/setStatus', payload: { status: v } }),
 
@@ -44,10 +51,15 @@ export const useStore = create(devtools(subscribeWithSelector((set, get)=>({
   tlUpdated: ({ entityId, patch, version, updatedAt })=> set((s)=>{
     const existing = s.timeline.byId[entityId];
     if (!existing) return {};
+    const existingVersion = typeof existing.version === 'number' ? existing.version : 0;
+    if (typeof version === 'number' && version <= existingVersion) {
+      return {};
+    }
+    const nextVersion = typeof version === 'number' ? version : (existingVersion + 1);
     const updated = {
       ...existing,
       props: { ...existing.props, ...(patch || {}) },
-      version: version || (existing.version + 1),
+      version: nextVersion,
       updatedAt: updatedAt || Date.now(),
     };
     return { timeline: { byId: { ...s.timeline.byId, [entityId]: updated }, order: s.timeline.order } };
@@ -74,12 +86,36 @@ export const useStore = create(devtools(subscribeWithSelector((set, get)=>({
   }),
   tlClear: ()=> set((s)=>({ timeline: { byId: {}, order: [] } })),
 
+  // Batch hydration merge with version gating
+  tlHydrated: ({ entities })=> set((s)=>{
+    const byId = { ...s.timeline.byId };
+    const order = [ ...s.timeline.order ];
+    const list = Array.isArray(entities) ? entities : [];
+    for (const ent of list) {
+      if (!ent || !ent.id) continue;
+      const existing = byId[ent.id];
+      const incomingVersion = typeof ent.version === 'number' ? ent.version : 0;
+      if (!existing) {
+        byId[ent.id] = ent;
+        order.push(ent.id);
+        continue;
+      }
+      const existingVersion = typeof existing.version === 'number' ? existing.version : 0;
+      if (incomingVersion > existingVersion) {
+        byId[ent.id] = { ...existing, ...ent, props: { ...existing.props, ...(ent.props || {}) } };
+      }
+    }
+    return { timeline: { byId, order } };
+  }),
+
   // Debug slice (for devtools visibility, minimal state impact)
   debug: {
     recvCount: 0,
     lastWsPayload: null,
     lastSemEvent: null,
     lastSemType: '',
+    hydrationCount: 0,
+    lastHydrationTs: 0,
   },
 
   // Simple dedupe buffer for user messages we just sent
@@ -243,6 +279,18 @@ export const useStore = create(devtools(subscribeWithSelector((set, get)=>({
     await get().startChat(t);
   },
 
+  // Internal helpers
+  _initFromUrl: ()=>{
+    try {
+      const u = new URL(location.href);
+      const cid = u.searchParams.get('conv_id');
+      if (cid) {
+        set((s)=>({ app: { ...s.app, convId: cid } }), false, { type: 'app/initConvId', payload: { convId: cid } });
+        get().wsConnect(cid);
+      }
+    } catch(_){ }
+  },
+
   ws: {
     connected: false,
     url: '',
@@ -286,6 +334,15 @@ export const useStore = create(devtools(subscribeWithSelector((set, get)=>({
   },
   wsOnOpen: ()=>{
     set((s)=>({ app: { ...s.app, status: 'ws connected' }, ws: { ...s.ws, connected: true } }), false, { type: 'ws/onOpen' });
+    try {
+      const convId = get().app.convId;
+      if (convId) {
+        set((s)=>({ app: { ...s.app, status: 'hydrating...' } }), false, { type: 'hydration/start' });
+        get().hydrateTimeline(convId).finally(()=>{
+          set((s)=>({ app: { ...s.app, status: 'ready' } }), false, { type: 'hydration/done' });
+        });
+      }
+    } catch(_){ }
   },
   wsOnClose: ()=>{
     set((s)=>({ app: { ...s.app, status: 'ws closed' }, ws: { ...s.ws, connected: false } }), false, { type: 'ws/onClose' });
@@ -370,10 +427,64 @@ export const useStore = create(devtools(subscribeWithSelector((set, get)=>({
     const newRun = j.run_id || '';
     const newConv = j.conv_id || convId || '';
     set((s)=>({ app: { ...s.app, runId: newRun, convId: newConv } }), false, { type: 'chat/startChat:received', payload: { runId: newRun, convId: newConv } });
+    try {
+      if (newConv) {
+        const u = new URL(location.href);
+        u.searchParams.set('conv_id', String(newConv));
+        history.replaceState(null, '', u.pathname + u.search + u.hash);
+      }
+    } catch(_){ }
     if (newConv && newConv !== convId) {
       get().wsConnect(newConv);
     }
   },
+
+  // Hydration: fetch timeline snapshots and merge with version gating
+  hydrateTimeline: async (convId)=>{
+    try {
+      if (!convId) return;
+      // Derive base prefix from current URL
+      const segs = location.pathname.split('/').filter(Boolean);
+      const prefix = segs.length > 0 ? `/${segs[0]}` : '';
+      console.debug('[hydration] fetching timeline', { convId });
+      const res = await fetch(`${prefix}/api/conversations/${encodeURIComponent(convId)}/timeline`);
+      if (!res.ok) return;
+      const snaps = await res.json();
+      const toEntity = (snap)=>{
+        const base = {
+          id: snap.entity_id,
+          kind: snap.kind,
+          renderer: { kind: snap.kind },
+          props: {},
+          startedAt: snap.started_at || Date.now(),
+          completed: false,
+          result: null,
+          version: typeof snap.version === 'number' ? snap.version : 0,
+          updatedAt: snap.updated_at || Date.now(),
+          completedAt: null,
+        };
+        switch (snap.kind) {
+          case 'llm_text':
+            return { ...base, renderer: { kind: 'llm_text' }, props: { role: snap.role || 'assistant', text: snap.text || '', streaming: !!snap.streaming, metadata: snap.metadata } };
+          case 'tool_call':
+            return { ...base, renderer: { kind: 'tool_call' }, props: { name: snap.name, input: snap.input, exec: !!snap.exec, status: snap.status, progress: snap.progress } };
+          case 'tool_result':
+            return { ...base, renderer: { kind: 'tool_call_result' }, props: { result: snap.result } };
+          case 'agent_mode':
+            return { ...base, renderer: { kind: 'agent_mode' }, props: { title: snap.title, ...(snap.data || {}) } };
+          case 'log_event':
+            return { ...base, renderer: { kind: 'log_event' }, props: { level: snap.level || 'info', message: snap.message, fields: snap.fields } };
+          default:
+            return { ...base, props: { ...snap } };
+        }
+      };
+      const entities = Array.isArray(snaps) ? snaps.map(toEntity).filter((e)=> e && e.id) : [];
+      console.debug('[hydration] received snapshots', { count: entities.length });
+      get().tlHydrated({ entities });
+      set((s)=>({ debug: { ...s.debug, hydrationCount: (s.debug?.hydrationCount || 0) + entities.length, lastHydrationTs: Date.now() } }), false, { type: 'hydration/merge', payload: { count: entities.length } });
+    } catch(_){ }
+  },
 })), { name: 'web-chat' }));
 
-
+// Initialize from URL if conv_id is present (enables reload-resume)
+try { useStore.getState()._initFromUrl?.(); } catch(_) {}
