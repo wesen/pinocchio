@@ -14,6 +14,7 @@ import (
 	"github.com/go-go-golems/geppetto/pkg/inference/engine"
 	"github.com/go-go-golems/geppetto/pkg/inference/middleware"
 	"github.com/go-go-golems/geppetto/pkg/turns"
+	"github.com/go-go-golems/pinocchio/pkg/snapshots"
 )
 
 // Conversation holds per-conversation state and streaming attachments.
@@ -91,13 +92,15 @@ func (r *Router) convertAndBroadcast(conv *Conversation, e events.Event) {
 		}
 		conv.connsMu.RUnlock()
 	}
-    var frames [][]byte
-    if r.snapStore != nil && r.proj != nil {
-        frames = SemanticEventsFromEventWithProjection(r.baseCtx, e, r.proj, r.snapStore)
-    } else {
-        frames = SemanticEventsFromEvent(e)
-    }
-    if frames != nil {
+	var frames [][]byte
+	if r.snapStore != nil && r.proj != nil {
+		// Attach conv_id to context so projector/store persist by conv_id (not run_id)
+		ctx := snapshots.WithConversationID(r.baseCtx, conv.ID)
+		frames = SemanticEventsFromEventWithProjection(ctx, e, r.proj, r.snapStore)
+	} else {
+		frames = SemanticEventsFromEvent(e)
+	}
+	if frames != nil {
 		for _, b := range frames {
 			send(b)
 		}

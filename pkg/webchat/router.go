@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
-	"strconv"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,16 +81,16 @@ func (r *Router) AddProfile(p *Profile) { _ = r.profiles.Add(p) }
 // EnableSnapshotsSQLite opens (or creates) an on-disk SQLite store for snapshots
 // and enables projection persistence.
 func (r *Router) EnableSnapshotsSQLite(path string) error {
-    store, err := snapshots.OpenSQLite(path)
-    if err != nil {
-        return err
-    }
-    r.snapStore = store
-    if r.proj == nil {
-        r.proj = snapshots.NewBasicProjector()
-    }
-    log.Info().Str("component", "webchat").Str("db", path).Msg("snapshot store enabled (sqlite)")
-    return nil
+	store, err := snapshots.OpenSQLite(path)
+	if err != nil {
+		return err
+	}
+	r.snapStore = store
+	if r.proj == nil {
+		r.proj = snapshots.NewBasicProjector()
+	}
+	log.Info().Str("component", "webchat").Str("db", path).Msg("snapshot store enabled (sqlite)")
+	return nil
 }
 
 // Mount attaches all handlers to a parent mux with the given prefix.
@@ -388,6 +388,31 @@ func (r *Router) registerHTTPHandlers() {
 		turns.AppendBlock(conv.Turn, turns.NewUserTextBlock(body.Prompt))
 		conv.Turn.RunID = conv.RunID
 
+		// Persist user's input as a snapshot (keyed by conv_id)
+		if r.snapStore != nil {
+			now := time.Now().UnixMilli()
+			uid := "user-" + uuid.NewString()
+			s := &snapshots.LLMTextSnapshot{
+				SnapshotBase: snapshots.SnapshotBase{
+					ConversationID: conv.ID,
+					EntityID:       uid,
+					Kind:           snapshots.KindLLMText,
+					Status:         "completed",
+					StartedAt:      now,
+					UpdatedAt:      now,
+					Version:        now,
+				},
+				Role:      "user",
+				Text:      body.Prompt,
+				Streaming: false,
+			}
+			if err := r.snapStore.Upsert(r.baseCtx, s); err != nil {
+				log.Warn().Err(err).Str("component", "webchat").Str("conv_id", conv.ID).Msg("failed to upsert user snapshot")
+			} else {
+				log.Debug().Str("component", "webchat").Str("conv_id", conv.ID).Str("entity_id", uid).Msg("user snapshot upserted")
+			}
+		}
+
 		registry := geptools.NewInMemoryToolRegistry()
 		for name, tf := range r.toolFactories {
 			_ = tf(registry)
@@ -533,6 +558,31 @@ func (r *Router) registerHTTPHandlers() {
 		}
 		turns.AppendBlock(conv.Turn, turns.NewUserTextBlock(body.Prompt))
 		conv.Turn.RunID = conv.RunID
+
+		// Persist user's input as a snapshot (keyed by conv_id)
+		if r.snapStore != nil {
+			now := time.Now().UnixMilli()
+			uid := "user-" + uuid.NewString()
+			s := &snapshots.LLMTextSnapshot{
+				SnapshotBase: snapshots.SnapshotBase{
+					ConversationID: conv.ID,
+					EntityID:       uid,
+					Kind:           snapshots.KindLLMText,
+					Status:         "completed",
+					StartedAt:      now,
+					UpdatedAt:      now,
+					Version:        now,
+				},
+				Role:      "user",
+				Text:      body.Prompt,
+				Streaming: false,
+			}
+			if err := r.snapStore.Upsert(r.baseCtx, s); err != nil {
+				log.Warn().Err(err).Str("component", "webchat").Str("conv_id", conv.ID).Msg("failed to upsert user snapshot")
+			} else {
+				log.Debug().Str("component", "webchat").Str("conv_id", conv.ID).Str("entity_id", uid).Msg("user snapshot upserted")
+			}
+		}
 
 		// Build registry for this run from default tools (and optional overrides later)
 		registry := geptools.NewInMemoryToolRegistry()

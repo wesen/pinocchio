@@ -12,8 +12,8 @@ import (
 	geptools "github.com/go-go-golems/geppetto/pkg/inference/tools"
 	"github.com/go-go-golems/geppetto/pkg/turns"
 	"github.com/go-go-golems/glazed/pkg/cmds/layers"
-	"github.com/gorilla/websocket"
 	"github.com/go-go-golems/pinocchio/pkg/snapshots"
+	"github.com/gorilla/websocket"
 )
 
 // MiddlewareFactory creates a middleware instance from an arbitrary config object.
