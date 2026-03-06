@@ -44,13 +44,6 @@ func NewServer(ctx context.Context, parsed *values.Values, staticFS fs.FS, opts 
 
 func (s *Server) Router() *Router { return s.router }
 
-func (s *Server) RegisterMiddleware(name string, f MiddlewareBuilder) {
-	if s == nil || s.router == nil {
-		return
-	}
-	s.router.RegisterMiddleware(name, f)
-}
-
 func (s *Server) RegisterTool(name string, f infruntime.ToolRegistrar) {
 	if s == nil || s.router == nil {
 		return
