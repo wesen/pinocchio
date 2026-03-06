@@ -189,34 +189,6 @@ func (r *Router) RegisterTool(name string, f infruntime.ToolRegistrar) {
 	}
 }
 
-// Mount attaches all handlers to a parent mux with the given prefix.
-// http.ServeMux does not strip prefixes, so we must use StripPrefix explicitly.
-func (r *Router) Mount(mux *http.ServeMux, prefix string) {
-	if prefix == "" || prefix == "/" {
-		mux.Handle("/", r.mux)
-		return
-	}
-	prefix = strings.TrimRight(prefix, "/")
-	mux.Handle(prefix+"/", http.StripPrefix(prefix, r.mux))
-	mux.HandleFunc(prefix, func(w http.ResponseWriter, r0 *http.Request) {
-		http.Redirect(w, r0, prefix+"/", http.StatusPermanentRedirect)
-	})
-}
-
-// Handle attaches an extra handler to the router utility mux.
-// This is optional convenience for app composition, not a central route-ownership mechanism.
-func (r *Router) Handle(pattern string, h http.Handler) { r.mux.Handle(pattern, h) }
-
-// HandleFunc attaches an extra handler to the router utility mux.
-// This is optional convenience for app composition, not a central route-ownership mechanism.
-func (r *Router) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
-	r.mux.HandleFunc(pattern, handler)
-}
-
-// Handler returns the router utility mux (UI + core API + any explicitly attached extras).
-// Applications should still own and mount /chat and /ws themselves.
-func (r *Router) Handler() http.Handler { return r.mux }
-
 // ChatService returns the chat-focused service surface (queue/idempotency/inference).
 func (r *Router) ChatService() *ConversationService { return r.chatService }
 
