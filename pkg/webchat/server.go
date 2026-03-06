@@ -100,20 +100,6 @@ func (s *Server) HTTPServer() *http.Server {
 	return s.httpSrv
 }
 
-// NewFromRouter constructs a server from an existing Router and http.Server.
-func NewFromRouter(ctx context.Context, r *Router, httpSrv *http.Server) *Server {
-	if ctx == nil {
-		panic("webchat: NewFromRouter requires non-nil ctx")
-	}
-	if r == nil {
-		panic("webchat: NewFromRouter requires non-nil router")
-	}
-	if httpSrv == nil {
-		panic("webchat: NewFromRouter requires non-nil http server")
-	}
-	return &Server{baseCtx: ctx, router: r, httpSrv: httpSrv}
-}
-
 func (s *Server) Run(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("ctx is nil")
