@@ -58,7 +58,7 @@ func (s *Server) RegisterTool(name string, f infruntime.ToolRegistrar) {
 	s.router.RegisterTool(name, f)
 }
 
-func (s *Server) ChatService() *ChatService {
+func (s *Server) ChatService() *ConversationService {
 	if s == nil || s.router == nil {
 		return nil
 	}

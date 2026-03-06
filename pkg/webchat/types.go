@@ -54,7 +54,7 @@ type Router struct {
 	// conversations
 	cm *ConvManager
 	// split service APIs.
-	chatService *ChatService
+	chatService *ConversationService
 	streamHub   *StreamHub
 
 	// runtime flags
